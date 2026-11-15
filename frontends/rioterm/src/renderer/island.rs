@@ -27,6 +27,7 @@ const PROGRESS_BOUNCE_LEN: f32 = 25.0;
 /// How long the bar takes to ease into a new length or position.
 const PROGRESS_EASE_SECS: f32 = 0.2;
 const TITLE_FONT_SIZE: f32 = 12.0;
+const SHORTCUT_GAP: f32 = 8.0;
 
 const TAB_PADDING_X: f32 = 27.0;
 const TAB_GAP: f32 = 6.0;
@@ -103,6 +104,45 @@ struct TabDrag {
     current_x: f32,
     // True once movement exceeded `DRAG_THRESHOLD`.
     started: bool,
+}
+
+fn tab_shortcut(tab_index: usize, num_tabs: usize) -> &'static str {
+    if !cfg!(target_os = "macos") {
+        return "";
+    }
+    // Command-9 selects the last tab, not necessarily the ninth.
+    match tab_index {
+        0 => "⌘1",
+        1 => "⌘2",
+        2 => "⌘3",
+        3 => "⌘4",
+        4 => "⌘5",
+        5 => "⌘6",
+        6 => "⌘7",
+        7 => "⌘8",
+        i if i + 1 == num_tabs => "⌘9",
+        _ => "",
+    }
+}
+
+fn fit_tab_shortcut(
+    sugarloaf: &mut Sugarloaf,
+    tab_index: usize,
+    num_tabs: usize,
+    available_width: f32,
+    opts: &DrawOpts,
+) -> (&'static str, f32) {
+    let shortcut = tab_shortcut(tab_index, num_tabs);
+    if shortcut.is_empty() {
+        return ("", 0.0);
+    }
+    let width = sugarloaf.text_mut().measure(shortcut, opts) + SHORTCUT_GAP;
+    let ellipsis_width =
+        sugarloaf.char_advance(TITLE_ELLIPSIS, Attributes::default(), TITLE_FONT_SIZE);
+    if width + ellipsis_width > available_width {
+        return ("", 0.0);
+    }
+    (shortcut, width)
 }
 
 fn fit_title_to_width<'a>(
@@ -958,13 +998,26 @@ impl Island {
             let bell = context_manager.bell(tab_index);
             let bell_width = if bell { BELL_DOT_SIZE + BELL_GAP } else { 0.0 };
 
-            let max_text_width = if single {
+            let available_width = if single {
                 single_title_budget(window_width, scale_factor, left_margin) - bell_width
             } else {
                 tab_width - TAB_PADDING_X * 2.0 - bell_width
             }
             .max(0.0);
-            let title = fit_title_to_width(sugarloaf, &raw_title, max_text_width);
+            let mut shortcut_opts = title_opts;
+            shortcut_opts.color[3] = (f32::from(shortcut_opts.color[3]) * 0.75) as u8;
+            let (shortcut, shortcut_width) = fit_tab_shortcut(
+                sugarloaf,
+                tab_index,
+                num_tabs,
+                available_width,
+                &shortcut_opts,
+            );
+            let title = fit_title_to_width(
+                sugarloaf,
+                &raw_title,
+                (available_width - shortcut_width).max(0.0),
+            );
 
             // UI text always paints in a final pass above every rect,
             // so the floating tab's opaque background can't occlude
@@ -977,11 +1030,9 @@ impl Island {
             });
 
             if !hidden_by_drag {
-                // Measure → centre → draw. Immediate mode, no cached
-                // text_id bookkeeping. The bell mark and the title are
-                // centred as one group.
-                let text_width =
-                    sugarloaf.text_mut().measure(&title, &title_opts) + bell_width;
+                // Centre the bell, title and shortcut as one group.
+                let title_width = sugarloaf.text_mut().measure(&title, &title_opts);
+                let text_width = title_width + bell_width + shortcut_width;
                 let text_x = if single {
                     single_title_x(window_width, scale_factor, text_width, left_margin)
                 } else {
@@ -1013,6 +1064,14 @@ impl Island {
                     &title,
                     &title_opts,
                 );
+                if !shortcut.is_empty() {
+                    sugarloaf.text_mut().draw(
+                        text_x + bell_width + title_width + SHORTCUT_GAP,
+                        text_y,
+                        shortcut,
+                        &shortcut_opts,
+                    );
+                }
             }
 
             // Nothing is drawn behind a lone title.
@@ -1133,18 +1192,40 @@ impl Island {
 
             let raw_title = self.get_title_for_tab(context_manager, drag_idx);
             if !raw_title.is_empty() {
-                let max_text_width = (tab_width - TAB_PADDING_X * 2.0).max(0.0);
-                let title = fit_title_to_width(sugarloaf, &raw_title, max_text_width);
+                let available_width = (tab_width - TAB_PADDING_X * 2.0).max(0.0);
                 let title_opts = DrawOpts {
                     font_size: TITLE_FONT_SIZE,
                     color: color_u8(self.active_text_color),
                     ..DrawOpts::default()
                 };
+                let mut shortcut_opts = title_opts;
+                shortcut_opts.color[3] = (f32::from(shortcut_opts.color[3]) * 0.75) as u8;
+                let (shortcut, shortcut_width) = fit_tab_shortcut(
+                    sugarloaf,
+                    drag_idx,
+                    num_tabs,
+                    available_width,
+                    &shortcut_opts,
+                );
+                let title = fit_title_to_width(
+                    sugarloaf,
+                    &raw_title,
+                    (available_width - shortcut_width).max(0.0),
+                );
                 let ui = sugarloaf.text_mut();
-                let text_width = ui.measure(&title, &title_opts);
+                let title_width = ui.measure(&title, &title_opts);
+                let text_width = title_width + shortcut_width;
                 let text_x = floating_x + (tab_width - text_width) / 2.0;
                 let text_y = (ISLAND_HEIGHT / 2.0) - (TITLE_FONT_SIZE / 2.);
                 ui.draw(text_x, text_y, &title, &title_opts);
+                if !shortcut.is_empty() {
+                    ui.draw(
+                        text_x + title_width + SHORTCUT_GAP,
+                        text_y,
+                        shortcut,
+                        &shortcut_opts,
+                    );
+                }
             }
         }
 
@@ -1573,6 +1654,18 @@ fn color_u8(c: [f32; 4]) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn tab_shortcut_matches_number_bindings_with_many_tabs() {
+        assert_eq!(tab_shortcut(0, 12), "⌘1");
+        assert_eq!(tab_shortcut(7, 12), "⌘8");
+        assert_eq!(tab_shortcut(8, 12), "");
+        assert_eq!(tab_shortcut(10, 12), "");
+        assert_eq!(tab_shortcut(11, 12), "⌘9");
+        assert_eq!(tab_shortcut(8, 9), "⌘9");
+        assert_eq!(tab_shortcut(1, 2), "⌘2");
+    }
 
     #[test]
     fn island_geometry_invariants() {

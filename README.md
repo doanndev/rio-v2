@@ -21,6 +21,10 @@
 
 Documentation: [rioterm.com](https://rioterm.com).
 
+On macOS, tab titles show the default switching shortcuts (`⌘1`–`⌘8`);
+`⌘9` appears on the last tab when there are nine or more tabs. Hints follow
+tab positions when reordered and hide when the tab is too narrow.
+
 ## Supporting the Project
 
 If you use and like Rio, please consider sponsoring it: your support helps to cover the fees required to maintain the project and to validate the time spent working on it!
